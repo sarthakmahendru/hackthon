@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MountainSentinel: mountain disaster early warning</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 27 12 8l6 10 3-5 9 14z' fill='%231E6E8C'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root {
+  --mist: #EEF2EF;
+  --panel: #FFFFFF;
+  --ink: #16302B;
+  --muted: #587069;
+  --line: #D3DCD6;
+  --accent: #1E6E8C;
+  --safe: #2F8F5B;
+  --watch: #C99A0B;
+  --warning: #E0691F;
+  --critical: #C62F35;
+  --safe-bg: #E6F3EB;
+  --watch-bg: #FBF3D9;
+  --warning-bg: #FCE9DC;
+  --critical-bg: #FBE3E4;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font-family: var(--font); color: var(--ink); background: var(--mist);
+  font-size: 14px; line-height: 1.45; font-variant-numeric: tabular-nums;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.app { display: grid; grid-template-rows: auto 1fr; height: 100dvh; }
+
+/* ---- top bar ---- */
+.bar {
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  padding: 10px 18px; background: var(--ink); color: #EAF1EE;
+}
+.brand { display: flex; align-items: baseline; gap: 12px; }
+.brand h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.1px; }
+.brand span { color: #A9BDB6; font-size: 13px; }
+.counts { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+.count { display: flex; align-items: center; gap: 7px; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.08); font-size: 13px; }
+.count i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.count b { font-weight: 600; }
+.conn { display: flex; align-items: center; gap: 7px; font-size: 13px; color: #A9BDB6; }
+.conn i { width: 9px; height: 9px; border-radius: 50%; background: #E0691F; }
+.conn.live i { background: #58C48A; }
+
+/* ---- layout ---- */
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 410px; min-height: 0; }
+.map-wrap { position: relative; min-height: 0; }
+#map { position: absolute; inset: 0; background: #DDE6DF; }
+.panel { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; min-height: 0; }
+.sect { padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.sect h2 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+
+/* ---- alert banner over the map ---- */
+.banner {
+  position: absolute; z-index: 700; top: 12px; left: 50%; transform: translateX(-50%);
+  max-width: min(680px, calc(100% - 90px)); display: none; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: 8px; background: var(--panel); border-left: 6px solid var(--critical);
+  box-shadow: 0 6px 24px rgba(20, 40, 35, .28); cursor: pointer;
+}
+.banner.show { display: flex; }
+.banner strong { font-weight: 600; }
+.banner button { border: 1px solid var(--line); background: var(--mist); border-radius: 6px; padding: 4px 10px; white-space: nowrap; }
+
+/* ---- risk markers ---- */
+.mk {
+  position: relative; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  color: #fff; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  transition: background-color .4s;
+}
+.mk b { font-size: 13px; font-weight: 600; }
+.mk-safe { background: var(--safe); }
+.mk-watch { background: var(--watch); }
+.mk-warning { background: var(--warning); }
+.mk-critical { background: var(--critical); }
+.mk.sel { outline: 3px solid var(--ink); outline-offset: 2px; }
+.mk-critical::after {
+  content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 3px solid var(--critical);
+  animation: pulse 1.6s ease-out infinite; pointer-events: none;
+}
+@keyframes pulse { from { transform: scale(.7); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mk-critical::after { animation: none; opacity: .5; } .mk { transition: none; } }
+
+/* ---- risk pill ---- */
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 13px; }
+.pill.safe { background: var(--safe-bg); color: #1D6B41; }
+.pill.watch { background: var(--watch-bg); color: #7A5C00; }
+.pill.warning { background: var(--warning-bg); color: #9A4310; }
+.pill.critical { background: var(--critical-bg); color: #9B1E24; }
+
+/* ---- node detail ---- */
+.node-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.node-head h2 { font-size: 18px; margin: 0 0 4px; }
+.action { margin: 12px 0 4px; padding: 10px 12px; border-left: 5px solid var(--line); background: var(--mist); border-radius: 0 6px 6px 0; }
+.action.safe { border-color: var(--safe); }
+.action.watch { border-color: var(--watch); }
+.action.warning { border-color: var(--warning); }
+.action.critical { border-color: var(--critical); background: var(--critical-bg); }
+.action b { display: block; font-weight: 600; margin-bottom: 2px; }
+
+.hazard { margin-top: 12px; }
+.hz-row { display: grid; grid-template-columns: 108px 1fr 34px; align-items: center; gap: 10px; }
+.hz-name { font-weight: 500; }
+.bar-track { height: 9px; background: var(--mist); border-radius: 5px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 5px; transition: width .5s, background-color .5s; }
+.hz-score { text-align: right; font-weight: 600; }
+.reasons { margin: 6px 0 0 118px; padding: 0; list-style: none; color: var(--muted); font-size: 12.5px; }
+.reasons li { margin-bottom: 3px; }
+.hz-note { margin: 4px 0 0 118px; font-size: 12.5px; color: var(--muted); }
+.sub { margin: 18px 0 6px; font-size: 13px; font-weight: 600; }
+
+.sensors { width: 100%; border-collapse: collapse; }
+.sensors td { padding: 5px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+.sensors td.val { text-align: right; font-weight: 500; white-space: nowrap; padding-left: 8px; }
+.sensors td.spark { width: 118px; text-align: right; color: var(--accent); }
+.sensors svg { display: block; margin-left: auto; }
+.trend { color: var(--accent); }
+
+/* ---- alerts & hikers ---- */
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed li { padding: 9px 10px 9px 12px; margin-bottom: 8px; border-left: 5px solid var(--line); background: var(--mist); border-radius: 0 6px 6px 0; cursor: pointer; }
+.feed li:hover { background: #E5ECE7; }
+.feed li.safe { border-color: var(--safe); }
+.feed li.watch { border-color: var(--watch); }
+.feed li.warning { border-color: var(--warning); }
+.feed li.critical { border-color: var(--critical); }
+.feed .t { font-weight: 500; }
+.feed .m { color: var(--muted); font-size: 12.5px; }
+.feed .r { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+
+.hikers { list-style: none; margin: 0; padding: 0; }
+.hikers li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.hikers li:first-child { border-top: 0; }
+.hk-status { font-size: 12.5px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.hk-status.ok { background: var(--safe-bg); color: #1D6B41; }
+.hk-status.overdue, .hk-status.sos { background: var(--critical-bg); color: #9B1E24; font-weight: 600; }
+
+/* ---- demo controls ---- */
+.demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.btn { padding: 9px 10px; border: 1px solid var(--line); background: var(--panel); border-radius: 7px; text-align: left; }
+.btn:hover { border-color: var(--accent); background: #F3F8F9; }
+.btn.reset { grid-column: 1 / -1; text-align: center; background: var(--mist); }
+#demo-msg { margin: 10px 0 0; min-height: 20px; }
+
+.sources { list-style: none; margin: 0; padding: 0; }
+.sources li { display: flex; justify-content: space-between; padding: 4px 0; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--line); }
+.dot.live { background: var(--safe); }
+.dot.offline { background: var(--warning); }
+
+/* ---- phone alerts, cameras ---- */
+.fld { display: block; margin-bottom: 9px; }
+.fld span { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 3px; }
+.fld input, .fld select { width: 100%; padding: 8px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; font: inherit; color: inherit; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.check { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 10px; font-size: 13px; }
+.check input { margin-top: 3px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; text-align: center; }
+.btn.primary:hover { background: #185a73; }
+.btn.small { padding: 3px 9px; font-size: 12.5px; }
+a.btn { display: inline-block; text-decoration: none; color: inherit; }
+#sub-msg { margin: 8px 0 0; min-height: 18px; }
+#sub-msg.bad { color: #9B1E24; }
+#sub-msg.ok { color: #1D6B41; }
+.list { list-style: none; margin: 10px 0 0; padding: 0; }
+.list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.list .acts { display: flex; gap: 6px; white-space: nowrap; }
+.msg { display: block; padding: 7px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+.msg .st { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; margin-right: 6px; }
+.msg .st.sent { background: var(--safe-bg); color: #1D6B41; }
+.msg .st.demo { background: var(--watch-bg); color: #7A5C00; }
+.msg .st.failed { background: var(--critical-bg); color: #9B1E24; }
+.thumb { display: block; margin-top: 6px; width: 100%; max-width: 240px; border-radius: 6px; border: 1px solid var(--line); }
+.cam-mk { width: 30px; height: 30px; border-radius: 7px; background: #fff; border: 3px solid var(--accent); display: grid; place-items: center; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.cam-mk svg { width: 17px; height: 17px; }
+.cam-mk.fire { border-color: var(--critical); }
+.cam-mk.person { border-color: var(--warning); }
+.cam-mk.off { opacity: .45; border-color: var(--muted); }
+
+/* ---- sightings and wildlife ---- */
+.sights { list-style: none; margin: 0; padding: 0; }
+.sights li { display: grid; grid-template-columns: 64px 1fr; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; align-items: start; }
+.sights li:first-child { border-top: 0; }
+.sights img, .sights .noimg { width: 64px; height: 48px; object-fit: cover; border-radius: 5px; border: 1px solid var(--line); background: var(--mist); }
+.sights .lbl { font-weight: 500; }
+.tag { display: inline-block; padding: 0 7px; border-radius: 999px; font-size: 12px; margin-right: 6px; }
+.tag.person { background: #E3F0F5; color: #14566F; }
+.tag.injured { background: var(--critical-bg); color: #9B1E24; }
+.tag.animal { background: var(--safe-bg); color: #1D6B41; }
+.sight-mk { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.4); color: #fff; }
+.sight-mk.person { background: var(--accent); }
+.sight-mk.injured { background: var(--critical); }
+.sight-mk.animal { background: var(--safe); }
+.sight-mk svg { width: 15px; height: 15px; }
+.wl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.wl th { text-align: left; font-weight: 500; color: var(--muted); font-size: 12px; padding: 0 4px 4px 0; }
+.wl td { padding: 6px 4px 6px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+.wl td.n { font-weight: 600; text-align: right; padding-right: 10px; }
+.wl .sp { text-transform: capitalize; font-weight: 500; }
+.wl svg { color: var(--accent); display: block; }
+.popimg { display: block; width: 220px; max-width: 100%; border-radius: 6px; margin-bottom: 6px; }
+
+.leaflet-popup-content { font-family: var(--font); }
+
+/* ---- small screens ---- */
+@media (max-width: 900px) {
+  .app { height: auto; display: block; }
+  .main { display: block; }
+  .map-wrap { height: 56dvh; }
+  .panel { border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .counts { margin-left: 0; }
+  .brand span { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand"><h1>MountainSentinel</h1><span>Early warning for mountain disasters</span></div>
+    <div class="counts" id="counts" aria-label="Nodes by risk level"></div>
+    <div class="conn" id="conn"><i></i><span>Connecting…</span></div>
+  </header>
+
+  <div class="main">
+    <div class="map-wrap">
+      <div id="map" role="application" aria-label="Map of sensor nodes"></div>
+      <div class="banner" id="banner" role="status" aria-live="assertive">
+        <div id="banner-text"></div>
+        <button type="button" id="banner-btn">Show on map</button>
+      </div>
+    </div>
+
+    <aside class="panel">
+      <section class="sect" id="detail" aria-live="polite"></section>
+      <section class="sect">
+        <h2>Alerts</h2>
+        <ul class="feed" id="alerts"></ul>
+      </section>
+      <section class="sect">
+        <h2>Hikers</h2>
+        <ul class="hikers" id="hikers"></ul>
+      </section>
+      <section class="sect">
+        <h2>Sightings and photos</h2>
+        <p class="muted small" style="margin:0 0 8px">People and animals seen by cameras, with the camera's GPS position. Click one to see the photo on the map.</p>
+        <ul class="sights" id="sights"></ul>
+      </section>
+      <section class="sect">
+        <h2>Wildlife</h2>
+        <div id="wildlife" class="small muted">No animals seen yet.</div>
+      </section>
+      <section class="sect" id="phone-sect">
+        <h2>Get alerts on your phone</h2>
+        <form id="sub-form" novalidate>
+          <label class="fld"><span>Your name</span><input id="sub-name" autocomplete="name" maxlength="60"></label>
+          <label class="fld"><span>Mobile number</span><input id="sub-phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="98765 43210 or +91 98765 43210"></label>
+          <div class="two">
+            <label class="fld"><span>Send by</span><select id="sub-channel"><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select></label>
+            <label class="fld"><span>Alert me for</span><select id="sub-level"><option value="warning">Warning and Critical</option><option value="critical">Critical only</option></select></label>
+          </div>
+          <label class="check"><input type="checkbox" id="sub-consent"><span>This is my number and I want mountain alerts on it.</span></label>
+          <button class="btn primary" type="submit" style="width:100%">Send me alerts</button>
+        </form>
+        <p id="sub-msg" class="small"></p>
+        <ul class="list" id="subs"></ul>
+        <h3 class="sub" style="margin-top:16px">Message log</h3>
+        <div id="outbox" class="small muted">No messages yet.</div>
+        <p class="muted small" id="phone-note" style="margin:10px 0 0"></p>
+      </section>
+      <section class="sect">
+        <h2>Laptop camera</h2>
+        <p class="muted small" style="margin:0 0 10px">Turn any laptop webcam into a camera on the mountain. It looks for flames and people and raises alerts with a photo.</p>
+        <a class="btn primary" href="/camera.html" target="_blank" rel="noopener">Open the camera node</a>
+        <ul class="list" id="cams"></ul>
+      </section>
+      <section class="sect" id="demo-sect" hidden>
+        <h2>Simulate an event</h2>
+        <p class="muted small" style="margin:0 0 10px">The sensors are simulated. Start an event and watch the risk engine react.</p>
+        <div class="demo-grid">
+          <button class="btn" data-sc="landslide">Landslide at Joshimath</button>
+          <button class="btn" data-sc="flood">Flash flood at Uttarkashi</button>
+          <button class="btn" data-sc="wildfire">Forest fire at Nainital</button>
+          <button class="btn" data-sc="earthquake">Earthquake near Joshimath</button>
+          <button class="btn" data-sc="hiker_lost">Trek group A goes silent</button>
+          <button class="btn" data-sc="rescue_drone">Drone finds the missing group</button>
+          <button class="btn" data-sc="injured">Injured trekker on trail</button>
+          <button class="btn" data-sc="animals">Elephant herd near Nainital</button>
+          <button class="btn reset" data-sc="reset">Reset everything</button>
+        </div>
+        <p id="demo-msg" class="small muted"></p>
+      </section>
+      <section class="sect">
+        <h2>Data sources</h2>
+        <ul class="sources small" id="sources"></ul>
+        <p class="muted small" style="margin:10px 0 0"><a href="/docs">API documentation</a></p>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var LEVEL_LABEL = { safe: "Normal", watch: "Watch", warning: "Warning", critical: "Critical" };
+  var RANK = { safe: 0, watch: 1, warning: 2, critical: 3 };
+  var LEVEL_COLOR = { safe: "#2F8F5B", watch: "#C99A0B", warning: "#E0691F", critical: "#C62F35" };
+  var HAZARD_ORDER = ["landslide", "flood", "wildfire", "seismic"];
+  var SENSORS = [
+    { key: "rain_1h_mm", label: "Rain, last hour", unit: "mm", dec: 1 },
+    { key: "soil_moisture_pct", label: "Soil moisture", unit: "%", dec: 0 },
+    { key: "tilt_deg", label: "Ground tilt", unit: "°", dec: 2 },
+    { key: "water_level_cm", label: "Stream level", unit: "cm", dec: 0 },
+    { key: "temperature_c", label: "Temperature", unit: "°C", dec: 1 },
+    { key: "humidity_pct", label: "Humidity", unit: "%", dec: 0 },
+    { key: "smoke_ppm", label: "Smoke", unit: "ppm", dec: 0 },
+    { key: "vibration_g", label: "Ground shaking", unit: "g", dec: 3 }
+  ];
+
+  var S = {
+    nodes: new Map(), alerts: [], hikers: new Map(), selected: null, external: null,
+    simulation: false, telegram: false, model: null, wsOpen: false, fitted: false,
+    cameras: new Map(), sightings: [], wildlife: [], subscribers: [], outbox: [], phoneChannels: { sms: false, whatsapp: false }
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(v) {
+    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function ago(ts) {
+    var s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    if (s < 60) return s + " s ago";
+    if (s < 3600) return Math.floor(s / 60) + " min ago";
+    if (s < 86400) return Math.floor(s / 3600) + " h ago";
+    return Math.floor(s / 86400) + " d ago";
+  }
+  function clock(ts) { return new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+  function num(v, d) { return Number(v).toFixed(d); }
+
+  /* ------------------------------------------------------------ map */
+  var map = L.map("map", { zoomControl: true }).setView([30.2, 79.0], 8);
+  var topo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+    maxZoom: 17,
+    attribution: "Map data © OpenStreetMap contributors, SRTM | Map style © OpenTopoMap (CC-BY-SA)"
+  }).addTo(map);
+  var tileErrors = 0;
+  topo.on("tileerror", function () {
+    tileErrors++;
+    if (tileErrors === 6) {
+      map.removeLayer(topo);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "© OpenStreetMap contributors"
+      }).addTo(map);
+    }
+  });
+
+  var nodeMarkers = new Map();
+  var hikerMarkers = new Map();
+  var quakeLayer = L.layerGroup().addTo(map);
+  var fireLayer = L.layerGroup().addTo(map);
+
+  function markerHtml(n) {
+    var a = n.assessment;
+    var sel = S.selected === n.node_id ? " sel" : "";
+    return '<div class="mk mk-' + a.risk_level + sel + '"><b>' + a.risk_score + "</b></div>";
+  }
+
+  function upsertNodeMarker(n) {
+    var rec = nodeMarkers.get(n.node_id);
+    if (!rec) {
+      var icon = L.divIcon({ className: "", html: markerHtml(n), iconSize: [34, 34], iconAnchor: [17, 17] });
+      var marker = L.marker([n.lat, n.lon], { icon: icon, keyboard: true, title: n.name + ", risk " + n.assessment.risk_level }).addTo(map);
+      marker.on("click", function () { select(n.node_id); });
+      rec = { marker: marker };
+      nodeMarkers.set(n.node_id, rec);
+      return;
+    }
+    // Update in place so the pulse animation on critical markers is not restarted on every reading.
+    var el = rec.marker.getElement();
+    if (el && el.firstChild) {
+      var mk = el.firstChild;
+      mk.className = "mk mk-" + n.assessment.risk_level + (S.selected === n.node_id ? " sel" : "");
+      mk.firstChild.textContent = n.assessment.risk_score;
+    }
+  }
+
+  function upsertHikerMarker(h) {
+    var bad = h.status !== "ok";
+    var style = {
+      radius: 7, weight: bad ? 4 : 2, color: bad ? LEVEL_COLOR.critical : "#fff",
+      fillColor: "#1E6E8C", fillOpacity: 1
+    };
+    var rec = hikerMarkers.get(h.id);
+    var tip = h.name + (bad ? " (needs help)" : "");
+    if (!rec) {
+      rec = L.circleMarker([h.lat, h.lon], style).addTo(map);
+      rec.bindTooltip(tip);
+      hikerMarkers.set(h.id, rec);
+    } else {
+      rec.setLatLng([h.lat, h.lon]);
+      rec.setStyle(style);
+      rec.setTooltipContent(tip);
+    }
+  }
+
+  function drawQuakes(list) {
+    quakeLayer.clearLayers();
+    (list || []).forEach(function (q) {
+      if (q.lat == null || q.lon == null) return;
+      L.circleMarker([q.lat, q.lon], {
+        radius: 3 + (q.mag || 2) * 2.2, color: "#5B4A96", weight: 1.5, fillColor: "#8B78C9", fillOpacity: 0.35
+      }).bindPopup("<b>Earthquake M " + esc(q.mag) + "</b><br>" + esc(q.place) + "<br>Depth " + esc(Math.round(q.depth_km)) + " km, " + ago(q.time) + "<br><span class='muted'>Source: USGS</span>").addTo(quakeLayer);
+    });
+  }
+  function drawFires(list) {
+    fireLayer.clearLayers();
+    (list || []).forEach(function (f) {
+      L.circleMarker([f.lat, f.lon], { radius: 4, color: "#8A1E22", weight: 1, fillColor: "#E0691F", fillOpacity: 0.9 })
+        .bindPopup("<b>Satellite fire hotspot</b><br>" + esc(f.date || "") + "<br><span class='muted'>Source: NASA FIRMS</span>").addTo(fireLayer);
+    });
+  }
+
+
+  /* ------------------------------------------------------------ cameras */
+  var camMarkers = new Map();
+  var CAM_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#1E6E8C" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+  function camOnline(c) { return Date.now() - c.seen < 30000; }
+  function camClass(c) {
+    if (!camOnline(c)) return "cam-mk off";
+    return "cam-mk" + ((c.fire_active || c.person_down) ? " fire" : (c.person_active ? " person" : ""));
+  }
+  function camPopup(c) {
+    return "<b>" + esc(c.name) + "</b><br>" + (camOnline(c) ? "Online" : "Offline") + (c.roaming ? " · roaming (GPS)" : "") +
+      "<br>Flames: " + Math.round(c.fire_score * 100) + "%<br>People in view: " + c.person_count +
+      (c.person_down ? "<br><b>Person lying still</b>" : "") + (c.animal_count ? "<br>Animals in view: " + c.animal_count : "");
+  }
+  function upsertCamMarker(c) {
+    var rec = camMarkers.get(c.id);
+    if (!rec) {
+      var icon = L.divIcon({ className: "", html: '<div class="' + camClass(c) + '">' + CAM_SVG + "</div>", iconSize: [30, 30], iconAnchor: [15, 15] });
+      var m = L.marker([c.lat, c.lon], { icon: icon, title: c.name }).addTo(map);
+      m.bindPopup(camPopup(c));
+      camMarkers.set(c.id, m);
+      return;
+    }
+    rec.setLatLng([c.lat, c.lon]);
+    var el = rec.getElement();
+    if (el && el.firstChild) el.firstChild.className = camClass(c);
+    rec.setPopupContent(camPopup(c));
+  }
+  function renderCams() {
+    var ul = $("cams");
+    var list = Array.from(S.cameras.values());
+    if (!list.length) { ul.innerHTML = ""; return; }
+    ul.innerHTML = list.map(function (c) {
+      var state = !camOnline(c) ? "Offline" : c.fire_active ? "Sees flames" : c.person_down ? "Person down" : c.person_active ? c.person_count + " in view" : c.animal_count ? c.animal_count + " animals" : "Watching";
+      var cls = !camOnline(c) ? "" : (c.fire_active || c.person_down) ? "hk-status overdue" : "hk-status ok";
+      return '<li data-cam="' + esc(c.id) + '" style="cursor:pointer"><span>' + esc(c.name) + '</span><span class="' + cls + '">' + state + "</span></li>";
+    }).join("");
+  }
+  $("cams").addEventListener("click", function (ev) {
+    var li = ev.target.closest("li[data-cam]");
+    var c = li && S.cameras.get(li.getAttribute("data-cam"));
+    if (c) { map.flyTo([c.lat, c.lon], 11, { duration: 0.7 }); var m = camMarkers.get(c.id); if (m) m.openPopup(); }
+  });
+  setInterval(function () { S.cameras.forEach(upsertCamMarker); renderCams(); }, 5000);
+
+
+  /* ------------------------------------------------------------ sightings and wildlife */
+  var sightMarkers = new Map();
+  var SIGHT_SVG = {
+    person: '<svg viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="6.5" r="3.5"/><path d="M5 21c0-4.5 3-7.5 7-7.5s7 3 7 7.5z"/></svg>',
+    injured: '<svg viewBox="0 0 24 24" fill="#fff"><path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/></svg>',
+    animal: '<svg viewBox="0 0 24 24" fill="#fff"><ellipse cx="12" cy="16" rx="5" ry="4"/><circle cx="5.5" cy="10.5" r="2.2"/><circle cx="10" cy="6.5" r="2.2"/><circle cx="14" cy="6.5" r="2.2"/><circle cx="18.5" cy="10.5" r="2.2"/></svg>'
+  };
+  function okImg(a) { return a && String(a).indexOf("data:image/") === 0; }
+  function sightPopup(x) {
+    return (okImg(x.image) ? '<img class="popimg" alt="Photo from the camera" src="' + esc(x.image) + '">' : "") +
+      "<b>" + esc(x.label) + "</b><br>" + ago(x.ts) + " · " + esc(x.camera) + "<br>" +
+      "GPS " + Number(x.lat).toFixed(4) + ", " + Number(x.lon).toFixed(4);
+  }
+  function upsertSightMarker(x) {
+    if (sightMarkers.has(x.id) || x.lat == null) return;
+    var kind = SIGHT_SVG[x.kind] ? x.kind : "person";
+    var icon = L.divIcon({ className: "", html: '<div class="sight-mk ' + kind + '">' + SIGHT_SVG[kind] + "</div>", iconSize: [28, 28], iconAnchor: [14, 14] });
+    var m = L.marker([x.lat, x.lon], { icon: icon, title: x.label }).addTo(map);
+    m.bindPopup(sightPopup(x), { minWidth: 230 });
+    sightMarkers.set(x.id, m);
+  }
+  function renderSights() {
+    var ul = $("sights");
+    if (!S.sightings.length) { ul.innerHTML = '<li class="muted" style="cursor:default;display:block">No sightings yet. Try "Drone finds the missing group" below, or use the camera page.</li>'; return; }
+    ul.innerHTML = S.sightings.slice(0, 8).map(function (x) {
+      var kind = ["person", "injured", "animal"].indexOf(x.kind) >= 0 ? x.kind : "person";
+      var img = okImg(x.image) ? '<img alt="Photo" src="' + esc(x.image) + '">' : '<div class="noimg"></div>';
+      return '<li data-sid="' + x.id + '">' + img + '<div><div class="lbl"><span class="tag ' + kind + '">' + (kind === "injured" ? "Injured?" : kind === "animal" ? "Animal" : "Person") + "</span>" + esc(x.label) +
+        '</div><div class="muted small">' + ago(x.ts) + " · " + esc(x.camera) + '</div><div class="muted small">GPS ' + Number(x.lat).toFixed(4) + ", " + Number(x.lon).toFixed(4) + "</div></div></li>";
+    }).join("");
+  }
+  $("sights").addEventListener("click", function (ev) {
+    var li = ev.target.closest("li[data-sid]");
+    if (!li) return;
+    var id = Number(li.getAttribute("data-sid"));
+    var x = S.sightings.filter(function (v) { return v.id === id; })[0];
+    if (!x) return;
+    map.flyTo([x.lat, x.lon], 13, { duration: 0.7 });
+    var m = sightMarkers.get(id); if (m) m.openPopup();
+  });
+  function renderWildlife() {
+    var box = $("wildlife");
+    if (!S.wildlife.length) { box.className = "small muted"; box.textContent = "No animals seen yet. Start \"Elephant herd near Nainital\", or turn on AI in the camera page."; return; }
+    box.className = "";
+    box.innerHTML = '<table class="wl"><thead><tr><th>Species</th><th style="text-align:right;padding-right:10px">Now</th><th>Most</th><th>Seen</th><th>Movement</th><th></th></tr></thead><tbody>' +
+      S.wildlife.map(function (w) {
+        var mv = w.count_now === 0 ? "not in view" : (w.movement === "still" ? "still" : w.movement + (w.direction !== "none" ? ", " + w.direction : ""));
+        return '<tr><td class="sp">' + esc(w.species) + '</td><td class="n">' + w.count_now + "</td><td>" + w.max_count + "</td><td>" + w.total_seen + "</td><td>" + esc(mv) + "</td><td>" + spark(w.series, 60, 20) + "</td></tr>";
+      }).join("") + '</tbody></table><p class="muted small" style="margin:8px 0 0">"Seen" is an approximate count of individual animals tracked. Species are those the AI model knows.</p>';
+  }
+
+  /* ------------------------------------------------------------ phone alerts */
+  function renderSubs() {
+    var ul = $("subs");
+    ul.innerHTML = S.subscribers.map(function (u) {
+      return '<li><span>' + esc(u.name) + '<br><span class="muted small">' + (u.channel === "sms" ? "SMS" : "WhatsApp") + " · " + esc(u.phone) +
+        " · " + (u.min_level === "critical" ? "Critical only" : "Warning+") + '</span></span><span class="acts">' +
+        '<button class="btn small" data-test="' + u.id + '" type="button">Send test</button>' +
+        '<button class="btn small" data-del="' + u.id + '" type="button">Remove</button></span></li>';
+    }).join("");
+  }
+  function renderOutbox() {
+    var box = $("outbox");
+    if (!S.outbox.length) { box.textContent = "No messages yet."; return; }
+    box.innerHTML = S.outbox.slice(0, 6).map(function (m) {
+      var label = m.status === "sent" ? "Sent" : m.status === "demo" ? "Demo, not sent" : "Failed";
+      return '<span class="msg"><span class="st ' + esc(m.status) + '">' + label + "</span>" + esc(m.channel === "sms" ? "SMS" : "WhatsApp") +
+        " to " + esc(m.to) + " (" + esc(m.name) + ")<br><span class='muted'>" + esc(m.preview) + "</span>" +
+        (m.status === "failed" ? "<br><span style='color:#9B1E24'>" + esc(m.detail) + "</span>" : "") + "</span>";
+    }).join("");
+  }
+  function renderPhoneNote() {
+    var any = S.phoneChannels.sms || S.phoneChannels.whatsapp;
+    $("phone-note").textContent = any ? "Messages are sent through Twilio." :
+      "Twilio is not set up, so messages are shown in this log instead of being sent (demo mode). To send real messages, follow step 8 in docs/HOW_TO_RUN.md.";
+  }
+  function addOutbox(m) {
+    if (S.outbox.some(function (x) { return x.ts === m.ts && x.to === m.to && x.channel === m.channel; })) return;
+    S.outbox.unshift(m); renderOutbox();
+  }
+  function subMsg(text, cls) { var el = $("sub-msg"); el.textContent = text; el.className = "small " + (cls || ""); }
+  function errText(j) {
+    if (!j) return "Something went wrong.";
+    if (typeof j.detail === "string") return j.detail;
+    if (Array.isArray(j.detail) && j.detail[0]) return "Please check the form: " + (j.detail[0].msg || "invalid value");
+    return "Something went wrong.";
+  }
+  function refreshSubs() {
+    fetch("/api/subscribers").then(function (r) { return r.json(); }).then(function (l) { S.subscribers = l; renderSubs(); }).catch(function () {});
+  }
+  $("sub-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var name = $("sub-name").value.trim(), phone = $("sub-phone").value.trim();
+    if (!name) { subMsg("Enter your name.", "bad"); return; }
+    if (!phone) { subMsg("Enter your mobile number.", "bad"); return; }
+    if (!$("sub-consent").checked) { subMsg("Tick the box to confirm this is your number.", "bad"); return; }
+    fetch("/api/subscribers", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, phone: phone, channel: $("sub-channel").value, min_level: $("sub-level").value, consent: true })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        if (!res.ok) { subMsg(errText(res.body), "bad"); return; }
+        subMsg("Added " + res.body.phone + ". Press Send test to check that it works.", "ok");
+        $("sub-phone").value = ""; $("sub-consent").checked = false;
+        refreshSubs();
+      }).catch(function () { subMsg("Could not reach the server.", "bad"); });
+  });
+  $("subs").addEventListener("click", function (ev) {
+    var t = ev.target.closest("button");
+    if (!t) return;
+    if (t.getAttribute("data-test")) {
+      fetch("/api/subscribers/" + t.getAttribute("data-test") + "/test", { method: "POST" })
+        .then(function (r) { return r.json(); })
+        .then(function (m) { if (m.status) { addOutbox(m); subMsg(m.status === "demo" ? "Demo mode: the message is shown in the log below." : m.status === "sent" ? "Test message sent." : "Could not send: " + m.detail, m.status === "failed" ? "bad" : "ok"); } })
+        .catch(function () { subMsg("Could not reach the server.", "bad"); });
+    } else if (t.getAttribute("data-del")) {
+      fetch("/api/subscribers/" + t.getAttribute("data-del"), { method: "DELETE" }).then(refreshSubs);
+    }
+  });
+
+  /* ------------------------------------------------------------ rendering */
+  function spark(values, w, h) {
+    if (!values || values.length < 2) return "";
+    var min = Math.min.apply(null, values), max = Math.max.apply(null, values);
+    var span = max - min || 1;
+    var pts = values.map(function (v, i) {
+      var x = (i / (values.length - 1)) * (w - 4) + 2;
+      var y = h - 3 - ((v - min) / span) * (h - 6);
+      return x.toFixed(1) + "," + y.toFixed(1);
+    });
+    var last = pts[pts.length - 1].split(",");
+    return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" aria-hidden="true">' +
+      '<polyline points="' + pts.join(" ") + '" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.4" fill="currentColor"/></svg>';
+  }
+
+  function renderCounts() {
+    var c = { safe: 0, watch: 0, warning: 0, critical: 0 };
+    S.nodes.forEach(function (n) { c[n.assessment.risk_level]++; });
+    $("counts").innerHTML = ["critical", "warning", "watch", "safe"].map(function (l) {
+      return '<span class="count"><i style="background:' + LEVEL_COLOR[l] + '"></i><b>' + c[l] + "</b> " + LEVEL_LABEL[l].toLowerCase() + "</span>";
+    }).join("");
+  }
+
+  function renderDetail() {
+    var el = $("detail");
+    var n = S.selected && S.nodes.get(S.selected);
+    if (!n) {
+      el.innerHTML = '<h2>Sensor nodes</h2><p class="muted">Select a node on the map to see its sensors and warnings.</p>';
+      return;
+    }
+    var a = n.assessment, r = n.reading;
+    var html = '<div class="node-head"><div><h2>' + esc(n.name) + '</h2><div class="muted small">Updated ' + ago(r.ts) +
+      " · battery " + num(r.battery_pct, 0) + "% · rain last 24 h " + num(r.rain_24h_mm, 0) + ' mm</div></div>' +
+      '<span class="pill ' + a.risk_level + '">' + LEVEL_LABEL[a.risk_level] + " · " + a.risk_score + "</span></div>";
+
+    html += '<div class="action ' + a.risk_level + '"><b>' + (a.risk_level === "safe" ? "All clear" : esc(a.top_hazard_label)) + "</b>" + esc(a.recommended_action) + "</div>";
+
+    html += '<h3 class="sub">What the system sees</h3>';
+    HAZARD_ORDER.forEach(function (k) {
+      var h = a.hazards[k];
+      html += '<div class="hazard"><div class="hz-row"><span class="hz-name">' + esc(h.label) + '</span>' +
+        '<div class="bar-track" role="img" aria-label="' + esc(h.label) + " risk " + h.score + ' out of 100"><div class="bar-fill" style="width:' + h.score + "%;background:" + LEVEL_COLOR[h.level] + '"></div></div>' +
+        '<span class="hz-score">' + h.score + "</span></div>";
+      if (h.reasons.length && h.score >= 25) {
+        html += '<ul class="reasons">' + h.reasons.slice(0, 3).map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") + "</ul>";
+      } else if (h.score < 25) {
+        html += '<p class="hz-note">No warning signs.</p>';
+      }
+      html += "</div>";
+    });
+    if (a.hazards.landslide.ml_probability != null) {
+      html += '<p class="muted small" style="margin:12px 0 0">Score = 55% physics rules + 45% machine-learning estimate, plus live forecast and satellite context.</p>';
+    }
+
+    var series = n.series || [];
+    html += '<h3 class="sub">Risk over the last ' + series.length + ' readings</h3>' +
+      '<div class="trend" style="color:' + LEVEL_COLOR[a.risk_level] + '">' + spark(series.map(function (p) { return p.risk_score; }), 372, 44) + "</div>";
+
+    html += '<h3 class="sub">Sensors</h3><table class="sensors"><tbody>';
+    SENSORS.forEach(function (s) {
+      html += "<tr><td>" + s.label + '</td><td class="spark">' + spark(series.map(function (p) { return p[s.key]; }), 110, 24) +
+        '</td><td class="val">' + num(r[s.key], s.dec) + " " + s.unit + "</td></tr>";
+    });
+    html += "</tbody></table>";
+    el.innerHTML = html;
+  }
+
+  function renderAlerts() {
+    var ul = $("alerts");
+    if (!S.alerts.length) {
+      ul.innerHTML = '<li class="safe" style="cursor:default"><span class="t">No alerts yet.</span><div class="m">Alerts appear here and go to Telegram when a risk reaches Warning or Critical.</div></li>';
+      return;
+    }
+    ul.innerHTML = S.alerts.slice(0, 20).map(function (a, i) {
+      var reason = a.reasons && a.reasons.length ? '<div class="r">' + esc(a.reasons[0]) + "</div>" : "";
+      var img = a.image && String(a.image).indexOf("data:image/") === 0 ? '<img class="thumb" alt="Camera snapshot" src="' + esc(a.image) + '">' : "";
+      return '<li class="' + esc(a.level) + '" data-i="' + i + '"><div class="t">' + esc(a.title) + '</div><div class="m">' + clock(a.ts) + "</div>" + reason + img + "</li>";
+    }).join("");
+  }
+
+  function renderHikers() {
+    var ul = $("hikers");
+    var list = Array.from(S.hikers.values());
+    if (!list.length) { ul.innerHTML = '<li class="muted" style="cursor:default">No hikers registered.</li>'; return; }
+    ul.innerHTML = list.map(function (h) {
+      var label = h.status === "ok" ? "Checked in " + ago(h.last_checkin) : h.status === "sos" ? "SOS" : "Missed check-in";
+      return '<li data-id="' + esc(h.id) + '"><span>' + esc(h.name) + '</span><span class="hk-status ' + esc(h.status) + '">' + label + "</span></li>";
+    }).join("");
+  }
+
+  function renderSources() {
+    var e = S.external || {};
+    function row(name, state, extra) {
+      var cls = state === "live" ? "live" : (state === "offline" ? "offline" : "");
+      var text = state === "live" ? (extra || "live") : state;
+      return '<li><span><span class="dot ' + cls + '"></span>' + name + '</span><span class="muted">' + esc(text) + "</span></li>";
+    }
+    var m = S.model && S.model.available;
+    $("sources").innerHTML =
+      row("Rain forecast (Open-Meteo)", e.forecast || "waiting") +
+      row("Earthquakes (USGS)", e.earthquakes || "waiting", (e.earthquake_count || 0) + " in 7 days") +
+      row("Fire hotspots (NASA FIRMS)", e.fires || "waiting", (e.fire_count || 0) + " nearby") +
+      row("Machine-learning models", m ? "live" : "offline", "3 loaded") +
+      row("Telegram alerts", S.telegram ? "live" : "not configured", "on") +
+      row("Phone alerts (Twilio)", (S.phoneChannels.sms || S.phoneChannels.whatsapp) ? "live" : "demo mode", "on");
+  }
+
+  function renderAll() {
+    renderCounts(); renderDetail(); renderAlerts(); renderHikers(); renderSources();
+    renderCams(); renderSubs(); renderOutbox(); renderPhoneNote(); renderSights(); renderWildlife();
+  }
+
+  /* ------------------------------------------------------------ actions */
+  function select(id) {
+    S.selected = id;
+    S.nodes.forEach(upsertNodeMarker);
+    renderDetail();
+    var n = S.nodes.get(id);
+    if (n) map.flyTo([n.lat, n.lon], Math.max(map.getZoom(), 10), { duration: 0.7 });
+  }
+
+  var bannerTimer = null;
+  var bannerTarget = null;
+  function showBanner(a) {
+    if (!(a.level === "critical" || a.level === "warning")) return;
+    $("banner-text").innerHTML = "<strong>" + esc(a.title) + "</strong>";
+    $("banner").style.borderLeftColor = LEVEL_COLOR[a.level];
+    $("banner").classList.add("show");
+    bannerTarget = a;
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(function () { $("banner").classList.remove("show"); }, 15000);
+  }
+  function goToAlert(a) {
+    if (!a) return;
+    if (a.node_id && S.nodes.has(a.node_id)) { select(a.node_id); return; }
+    var h = Array.from(S.hikers.values()).filter(function (x) { return x.name === a.node_name; })[0];
+    if (h) map.flyTo([h.lat, h.lon], 12, { duration: 0.7 });
+  }
+  $("banner").addEventListener("click", function () { goToAlert(bannerTarget); });
+  $("alerts").addEventListener("click", function (ev) {
+    var li = ev.target.closest("li[data-i]");
+    if (li) goToAlert(S.alerts[Number(li.getAttribute("data-i"))]);
+  });
+  $("hikers").addEventListener("click", function (ev) {
+    var li = ev.target.closest("li[data-id]");
+    var h = li && S.hikers.get(li.getAttribute("data-id"));
+    if (h) map.flyTo([h.lat, h.lon], 12, { duration: 0.7 });
+  });
+
+  var DEMO_TEXT = {
+    landslide: "Heavy rain and ground tilt are building at Joshimath. Watch the node turn orange, then red.",
+    flood: "The river at Uttarkashi is rising. Watch the stream level and the flash flood score.",
+    wildfire: "Smoke and dry heat are building at Nainital.",
+    earthquake: "Strong shaking hit wet slopes near Joshimath. Look at the compound landslide warning.",
+    hiker_lost: "Trek group A stopped checking in. An alert follows in about 40 seconds.",
+    rescue_drone: "Trek group A went silent. A patrol drone flies out, and about a minute later it photographs a group near their last position. Watch for the possible-match alert.",
+    injured: "A patrol drone sees a person lying still on a trail near Nainital. Watch the alert and the photo.",
+    animals: "A patrol drone counts an elephant herd and birds near Nainital and tracks how they move. See the Wildlife table.",
+    reset: "Sensors are returning to normal."
+  };
+  document.querySelectorAll("[data-sc]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var sc = b.getAttribute("data-sc");
+      fetch("/api/demo/scenario", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scenario: sc }) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+        .then(function (res) {
+          $("demo-msg").textContent = res.ok ? DEMO_TEXT[sc] : (res.body.detail || "Could not start the event.");
+          if (res.ok && res.body.nodes && res.body.nodes.length && sc !== "reset") select(res.body.nodes[0]);
+        })
+        .catch(function () { $("demo-msg").textContent = "Could not reach the server."; });
+    });
+  });
+
+  /* ------------------------------------------------------------ data */
+  function applySnapshot(d) {
+    S.simulation = d.simulation; S.telegram = d.telegram; S.model = d.model; S.external = d.external;
+    $("demo-sect").hidden = !d.simulation;
+    S.nodes.clear();
+    d.nodes.forEach(function (n) { S.nodes.set(n.node_id, n); });
+    S.alerts = d.alerts || [];
+    S.hikers.clear();
+    (d.hikers || []).forEach(function (h) { S.hikers.set(h.id, h); });
+    S.nodes.forEach(upsertNodeMarker);
+    S.hikers.forEach(upsertHikerMarker);
+    drawQuakes(d.earthquakes); drawFires(d.fire_hotspots);
+    S.cameras.clear();
+    (d.cameras || []).forEach(function (c) { c.seen = c.online ? Date.now() : 0; S.cameras.set(c.id, c); upsertCamMarker(c); });
+    S.sightings = d.sightings || []; S.sightings.slice().reverse().forEach(upsertSightMarker); S.wildlife = d.wildlife || [];
+    S.subscribers = d.subscribers || []; S.outbox = d.outbox || []; S.phoneChannels = d.phone_channels || S.phoneChannels;
+    if (!S.selected && S.nodes.size) {
+      var best = Array.from(S.nodes.values()).sort(function (a, b) { return b.assessment.risk_score - a.assessment.risk_score; })[0];
+      S.selected = best.node_id;
+      S.nodes.forEach(upsertNodeMarker);
+    }
+    if (!S.fitted && S.nodes.size) {
+      var pts = Array.from(S.nodes.values()).map(function (n) { return [n.lat, n.lon]; });
+      map.fitBounds(pts, { padding: [70, 70], maxZoom: 9 });
+      S.fitted = true;
+    }
+    renderAll();
+  }
+
+  function onMessage(msg) {
+    var d = msg.data;
+    if (msg.type === "snapshot") { applySnapshot(d); return; }
+    if (msg.type === "node") {
+      var old = S.nodes.get(d.node_id);
+      var series = old && old.series ? old.series.slice(-59) : [];
+      series.push(d.point);
+      d.series = series;
+      S.nodes.set(d.node_id, d);
+      upsertNodeMarker(d);
+      renderCounts();
+      if (S.selected === d.node_id) renderDetail();
+    } else if (msg.type === "alert") {
+      S.alerts.unshift(d);
+      renderAlerts();
+      showBanner(d);
+    } else if (msg.type === "hiker") {
+      S.hikers.set(d.id, d);
+      upsertHikerMarker(d);
+      renderHikers();
+    } else if (msg.type === "camera") {
+      d.seen = Date.now();
+      S.cameras.set(d.id, d);
+      upsertCamMarker(d);
+      renderCams();
+    } else if (msg.type === "sighting") {
+      S.sightings.unshift(d); upsertSightMarker(d); renderSights();
+    } else if (msg.type === "wildlife") {
+      S.wildlife = d; renderWildlife();
+    } else if (msg.type === "outbox") {
+      addOutbox(d);
+    } else if (msg.type === "subscribers") {
+      S.subscribers = d; renderSubs();
+    } else if (msg.type === "external") {
+      S.external = d.external;
+      drawQuakes(d.earthquakes); drawFires(d.fire_hotspots);
+      renderSources();
+    }
+  }
+
+  function setConn(live) {
+    S.wsOpen = live;
+    $("conn").className = "conn" + (live ? " live" : "");
+    $("conn").lastChild.textContent = live ? "Live" : "Reconnecting…";
+  }
+
+  function connect() {
+    var proto = location.protocol === "https:" ? "wss://" : "ws://";
+    var ws = new WebSocket(proto + location.host + "/ws");
+    ws.onopen = function () { setConn(true); };
+    ws.onmessage = function (ev) { try { onMessage(JSON.parse(ev.data)); } catch (e) { console.error(e); } };
+    ws.onclose = function () { setConn(false); setTimeout(connect, 2000); };
+    ws.onerror = function () { ws.close(); };
+  }
+
+  function poll() {
+    if (S.wsOpen) return;
+    fetch("/api/state").then(function (r) { return r.json(); }).then(applySnapshot).catch(function () {});
+  }
+
+  // Refresh the "x s ago" texts every second without touching the map.
+  setInterval(renderHikers, 1000);
+  setInterval(poll, 5000);
+
+  poll();
+  connect();
+})();
+</script>
+</body>
+</html>

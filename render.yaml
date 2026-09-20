@@ -1,0 +1,12 @@
+# Render Blueprint: New > Blueprint > pick your GitHub repo. Free plan, builds from the Dockerfile.
+services:
+  - type: web
+    name: mountainsentinel
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: SIMULATE
+        value: "true"
+      - key: USE_LIVE_DATA
+        value: "true"

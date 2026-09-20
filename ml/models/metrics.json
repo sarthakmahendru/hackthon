@@ -1,0 +1,85 @@
+{
+  "note": "Synthetic, physically-informed training data. Metrics show the model learned the hazard relationships; they are not real-world accuracy.",
+  "n_samples": 15000,
+  "trained_at": "2026-09-20 02:50:55",
+  "hazards": {
+    "landslide": {
+      "positive_rate": 0.286,
+      "roc_auc": 0.958,
+      "accuracy": 0.91,
+      "precision": 0.852,
+      "recall": 0.828,
+      "f1": 0.84,
+      "top_features": [
+        {
+          "feature": "rain_24h_mm",
+          "importance": 0.311
+        },
+        {
+          "feature": "rain_1h_mm",
+          "importance": 0.233
+        },
+        {
+          "feature": "soil_moisture_pct",
+          "importance": 0.208
+        },
+        {
+          "feature": "water_level_cm",
+          "importance": 0.121
+        }
+      ]
+    },
+    "flood": {
+      "positive_rate": 0.087,
+      "roc_auc": 0.907,
+      "accuracy": 0.926,
+      "precision": 0.705,
+      "recall": 0.256,
+      "f1": 0.375,
+      "top_features": [
+        {
+          "feature": "water_level_cm",
+          "importance": 0.349
+        },
+        {
+          "feature": "water_trend",
+          "importance": 0.193
+        },
+        {
+          "feature": "rain_1h_mm",
+          "importance": 0.164
+        },
+        {
+          "feature": "rain_24h_mm",
+          "importance": 0.093
+        }
+      ]
+    },
+    "wildfire": {
+      "positive_rate": 0.052,
+      "roc_auc": 0.907,
+      "accuracy": 0.968,
+      "precision": 0.782,
+      "recall": 0.548,
+      "f1": 0.644,
+      "top_features": [
+        {
+          "feature": "smoke_ppm",
+          "importance": 0.689
+        },
+        {
+          "feature": "temperature_c",
+          "importance": 0.098
+        },
+        {
+          "feature": "humidity_pct",
+          "importance": 0.081
+        },
+        {
+          "feature": "tilt_trend",
+          "importance": 0.018
+        }
+      ]
+    }
+  }
+}

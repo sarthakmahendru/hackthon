@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MountainSentinel camera node</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 27 12 8l6 10 3-5 9 14z' fill='%231E6E8C'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --mist: #EEF2EF; --panel: #FFFFFF; --ink: #16302B; --muted: #587069; --line: #D3DCD6; --accent: #1E6E8C;
+  --safe: #2F8F5B; --watch: #C99A0B; --warning: #E0691F; --critical: #C62F35;
+  --font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--font); color: var(--ink); background: var(--mist); font-size: 14px; line-height: 1.45; font-variant-numeric: tabular-nums; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.bar { display: flex; align-items: center; gap: 16px; padding: 10px 18px; background: var(--ink); color: #EAF1EE; flex-wrap: wrap; }
+.bar h1 { margin: 0; font-size: 18px; font-weight: 600; }
+.bar a { color: #BFE3F2; margin-left: auto; }
+.wrap { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px; max-width: 1180px; margin: 0 auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.card h2 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
+.stage { position: relative; background: #0F1F1C; border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; }
+.stage video, .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.stage .idle { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: #A9BDB6; padding: 24px; }
+.stage.alarm { box-shadow: 0 0 0 4px var(--critical); }
+.controls { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.btn { padding: 8px 14px; border: 1px solid var(--line); background: var(--panel); border-radius: 7px; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+.btn.stop { background: var(--critical); border-color: var(--critical); color: #fff; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.meters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+.meter { background: var(--mist); border-radius: 8px; padding: 10px 12px; }
+.meter .k { color: var(--muted); font-size: 12.5px; }
+.meter .v { font-size: 22px; font-weight: 600; }
+.track { height: 7px; background: #dfe7e2; border-radius: 4px; margin-top: 6px; overflow: hidden; }
+.fill { height: 100%; width: 0; background: var(--safe); transition: width .25s, background-color .25s; }
+.field { display: block; margin-bottom: 10px; }
+.field span { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 3px; }
+.field input, .field select { width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.check { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0; }
+.check input { margin-top: 3px; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.status { padding: 8px 10px; border-radius: 6px; background: var(--mist); margin: 10px 0 0; }
+.status.ok { background: #E6F3EB; color: #1D6B41; }
+.status.bad { background: #FBE3E4; color: #9B1E24; }
+.log { list-style: none; margin: 8px 0 0; padding: 0; max-height: 210px; overflow-y: auto; }
+.log li { padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.log li.crit { color: #9B1E24; font-weight: 500; }
+details { margin-top: 12px; }
+summary { cursor: pointer; font-weight: 500; }
+ol.steps { margin: 6px 0 0; padding-left: 20px; }
+@media (max-width: 900px) { .wrap { grid-template-columns: 1fr; padding: 10px; } .meters { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>MountainSentinel camera node</h1>
+  <span class="muted" style="color:#A9BDB6">This laptop acts as a camera on the mountain</span>
+  <a href="/">Back to the dashboard</a>
+</header>
+
+<div class="wrap">
+  <main class="card">
+    <div class="stage" id="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div class="idle" id="idle"><div><b>Camera is off</b><br>Press "Start camera" and allow access when your browser asks.</div></div>
+    </div>
+
+    <div class="controls">
+      <button class="btn primary" id="start">Start camera</button>
+      <button class="btn stop" id="stop" hidden>Stop camera</button>
+      <select id="devices" class="btn" aria-label="Choose camera" hidden></select>
+      <button class="btn" id="ai">Turn on AI (people and animals)</button>
+    </div>
+
+    <div class="meters">
+      <div class="meter"><div class="k">Flames</div><div class="v" id="m-fire">0%</div><div class="track"><div class="fill" id="b-fire"></div></div></div>
+      <div class="meter"><div class="k">People in view</div><div class="v" id="m-people">0</div><div class="small muted" id="m-ai">AI is off</div></div>
+      <div class="meter"><div class="k">Movement</div><div class="v" id="m-motion">0%</div><div class="track"><div class="fill" id="b-motion" style="background:var(--accent)"></div></div></div>
+      <div class="meter"><div class="k">Lying still (possible injury)</div><div class="v" id="m-down">No</div><div class="small muted">Person on the ground for 5 s</div></div>
+      <div class="meter" style="grid-column: span 2"><div class="k">Animals in view</div><div class="v" id="m-animals" style="font-size:18px">None</div><div class="small muted">Counts each species and tracks how it moves (needs AI)</div></div>
+    </div>
+    <div class="status" id="status">Not sending yet.</div>
+
+    <details>
+      <summary>How to test it in front of the judges</summary>
+      <ol class="steps">
+        <li><b>Flames:</b> show a lit candle or lighter to the camera, or play a fire video on your phone and hold it up. The flame meter rises and the dashboard raises a critical alert with a photo.</li>
+        <li><b>People:</b> turn on the AI (needs internet once to download the model), then stand in front of the camera. A blue box appears.</li>
+        <li><b>Injured person:</b> with the AI on, lie on the floor in view of the camera and stay still for 5 seconds. The box turns red.</li>
+        <li><b>Animals:</b> hold up a phone showing a video of an elephant, a cow, a horse, a sheep, a dog or a bird. The page counts each species and tracks its movement.</li>
+        <li><b>Lost people:</b> tick "Roaming" on a phone or laptop with GPS. Every person sighting is sent with a photo and the GPS position.</li>
+        <li>If the room light is bad, use the test buttons on the right. They send a labelled test detection, so say that it is a test.</li>
+      </ol>
+    </details>
+  </main>
+
+  <aside style="display:grid; gap:16px; align-content:start">
+    <section class="card">
+      <h2>Where is this camera?</h2>
+      <label class="field"><span>Camera name</span><input id="cam-name" value="Laptop camera"></label>
+      <div class="row2">
+        <label class="field"><span>Latitude</span><input id="lat" inputmode="decimal" value="30.50"></label>
+        <label class="field"><span>Longitude</span><input id="lon" inputmode="decimal" value="79.20"></label>
+      </div>
+      <button class="btn" id="geo" type="button">Use my real location</button>
+      <label class="check"><input type="checkbox" id="roam"><span><b>Roaming:</b> follow my GPS position (drone, rover, or a phone on patrol). Every photo and alert carries the current position.</span></label>
+      <div id="gps" class="small muted"></div>
+      <p class="muted small" style="margin:8px 0 0">The default point is inside the Uttarakhand sensor network, so this camera shows up on the same map. Sensors within 25 km also add "camera sees flames" to their fire risk.</p>
+      <label class="check"><input type="checkbox" id="send" checked><span>Send detections to MountainSentinel</span></label>
+      <details><summary>Server needs a key?</summary>
+        <label class="field" style="margin-top:8px"><span>API key (only if INGEST_API_KEY is set)</span><input id="apikey" type="password" autocomplete="off"></label>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Test detections</h2>
+      <p class="muted small" style="margin:0 0 10px">For demos when you have no flame to show. These are labelled tests.</p>
+      <div class="controls" style="margin:0">
+        <button class="btn" id="t-fire">Send test flames</button>
+        <button class="btn" id="t-person">Send test person</button>
+        <button class="btn" id="t-injured">Send test injured person</button>
+        <button class="btn" id="t-animals">Send test animals</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>What this camera did</h2>
+      <ul class="log" id="log"><li class="muted">Nothing yet.</li></ul>
+    </section>
+  </aside>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d");
+  var W = 160, H = 120;
+  var work = document.createElement("canvas"); work.width = W; work.height = H;
+  var wctx = work.getContext("2d", { willReadFrequently: true });
+
+  var stream = null, timer = null, aiTimer = null, model = null, aiBusy = false;
+  var prevMask = null, prevGray = null, flickHist = [];
+  var smooth = 0, fireBox = null, personBoxes = [], recentPeople = [];
+  var motion = 0, people = 0;
+  var personDown = false, lyingSince = null, lyingPos = null, animalBoxes = [], animalsNow = [];
+  var tracks = [], newInd = {}, lastSpecies = [], lastDown = false, lastPersonSnap = 0, watchId = null;
+  var ANIMALS = { bird: 1, cat: 1, dog: 1, horse: 1, sheep: 1, cow: 1, elephant: 1, bear: 1, zebra: 1, giraffe: 1 };
+  var lastSent = 0, lastFireActive = false, lastPersonActive = false, sending = false;
+
+  function ramp(x, lo, hi) { return Math.max(0, Math.min(1, (x - lo) / (hi - lo))); }
+  function stamp() { return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }); }
+
+  var camId = localStorage.getItem("ms-cam-id");
+  if (!camId) { camId = "cam-" + Math.random().toString(36).slice(2, 8); localStorage.setItem("ms-cam-id", camId); }
+  ["cam-name", "lat", "lon"].forEach(function (id) {
+    var v = localStorage.getItem("ms-" + id); if (v) $(id).value = v;
+    $(id).addEventListener("change", function () { localStorage.setItem("ms-" + id, $(id).value); });
+  });
+
+  function log(text, crit) {
+    var ul = $("log");
+    if (ul.firstChild && ul.firstChild.classList.contains("muted")) ul.innerHTML = "";
+    var li = document.createElement("li");
+    if (crit) li.className = "crit";
+    li.textContent = stamp() + "  " + text;
+    ul.insertBefore(li, ul.firstChild);
+    while (ul.children.length > 30) ul.removeChild(ul.lastChild);
+  }
+  function setStatus(text, cls) { var s = $("status"); s.textContent = text; s.className = "status" + (cls ? " " + cls : ""); }
+
+  /* ---------------------------------------------------------- camera */
+  async function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus("This browser cannot open the camera here. Open the page as http://localhost:8000/camera.html or over https.", "bad");
+      return;
+    }
+    try {
+      var id = $("devices").value;
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: id ? { deviceId: { exact: id }, width: 640, height: 480 } : { width: 640, height: 480, facingMode: "user" },
+        audio: false
+      });
+    } catch (e) {
+      var msg = e && e.name === "NotAllowedError" ? "Camera access was blocked. Click the camera icon in the address bar, choose Allow, then press Start again."
+        : e && e.name === "NotFoundError" ? "No camera was found on this device."
+        : e && e.name === "NotReadableError" ? "Another app is using the camera. Close it and try again."
+        : "Could not start the camera: " + (e && e.message);
+      setStatus(msg, "bad");
+      return;
+    }
+    video.srcObject = stream;
+    await video.play();
+    $("idle").hidden = true;
+    $("start").hidden = true; $("stop").hidden = false;
+    overlay.width = video.videoWidth || 640; overlay.height = video.videoHeight || 480;
+    prevMask = prevGray = null; flickHist = []; smooth = 0;
+    try {
+      var devs = (await navigator.mediaDevices.enumerateDevices()).filter(function (d) { return d.kind === "videoinput"; });
+      if (devs.length > 1) {
+        var sel = $("devices"); var cur = stream.getVideoTracks()[0].getSettings().deviceId;
+        sel.innerHTML = devs.map(function (d, i) { return '<option value="' + d.deviceId + '"' + (d.deviceId === cur ? " selected" : "") + ">" + (d.label || "Camera " + (i + 1)) + "</option>"; }).join("");
+        sel.hidden = false;
+      }
+    } catch (e) { /* not important */ }
+    timer = setInterval(analyse, 250);
+    if (model) aiTimer = setInterval(detectObjects, 700);
+    log("Camera started.");
+    setStatus($("send").checked ? "Camera is on. Sending to the server every 2 seconds." : "Camera is on. Sending is switched off.", "ok");
+  }
+
+  function stopCamera() {
+    clearInterval(timer); clearInterval(aiTimer); timer = aiTimer = null;
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    stream = null; video.srcObject = null;
+    octx.clearRect(0, 0, overlay.width, overlay.height);
+    $("idle").hidden = false; $("start").hidden = false; $("stop").hidden = true;
+    $("stage").classList.remove("alarm");
+    smooth = 0; people = 0; recentPeople = []; personBoxes = []; fireBox = null;
+    personDown = false; lyingSince = null; tracks = []; newInd = {}; animalsNow = []; animalBoxes = [];
+    render();
+    log("Camera stopped.");
+    setStatus("Camera is off.");
+  }
+
+  /* ---------------------------------------------------------- flame detection (runs offline) */
+  function analyse() {
+    if (!stream || video.readyState < 2) return;
+    wctx.drawImage(video, 0, 0, W, H);
+    var d = wctx.getImageData(0, 0, W, H).data;
+    var n = W * H, mask = new Uint8Array(n), gray = new Uint8Array(n);
+    var fire = 0, minX = W, minY = H, maxX = 0, maxY = 0;
+    for (var i = 0, p = 0; i < n; i++, p += 4) {
+      var r = d[p], g = d[p + 1], b = d[p + 2];
+      gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
+      // Flame colours: bright orange to yellow, strongly saturated (this rejects skin and beige walls).
+      if (r >= 190 && g >= 60 && g <= 235 && b <= 120 && r >= g && g > b && (r - b) >= 0.55 * r) {
+        mask[i] = 1; fire++;
+        var x = i % W, y = (i / W) | 0;
+        if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    var changed = 0, union = 0, diff = 0;
+    if (prevMask) {
+      for (var j = 0; j < n; j++) {
+        var a = mask[j], c = prevMask[j];
+        if (a | c) { union++; if (a !== c) changed++; }
+        diff += Math.abs(gray[j] - prevGray[j]);
+      }
+    }
+    prevMask = mask; prevGray = gray;
+
+    // A static orange object has colour but does not flicker. Real flames flicker.
+    var flick = union > 0.004 * n ? changed / union : 0;
+    flickHist.push(flick); if (flickHist.length > 6) flickHist.shift();
+    var avgFlick = flickHist.reduce(function (s, v) { return s + v; }, 0) / flickHist.length;
+
+    var area = fire / n;
+    var raw = 0.5 * ramp(area, 0.002, 0.03) + 0.5 * ramp(avgFlick, 0.08, 0.30);
+    if (avgFlick < 0.08) raw = Math.min(raw, 0.3);
+    if (area < 0.002) raw = 0;
+    smooth = 0.6 * smooth + 0.4 * raw;
+
+    motion = ramp(diff / (n * 255), 0.01, 0.08);
+    fireBox = (smooth > 0.25 && fire > 0.002 * n)
+      ? { x: minX / W, y: minY / H, w: (maxX - minX + 1) / W, h: (maxY - minY + 1) / H } : null;
+
+    render();
+    maybeSend(false);
+  }
+
+  /* ---------------------------------------------------------- AI person detection (needs internet once) */
+  function loadScript(src) {
+    return new Promise(function (res, rej) {
+      var s = document.createElement("script"); s.src = src; s.onload = res;
+      s.onerror = function () { rej(new Error("Could not load " + src)); };
+      document.head.appendChild(s);
+    });
+  }
+  async function enableAI() {
+    var btn = $("ai"); btn.disabled = true; btn.textContent = "Loading AI model…";
+    try {
+      if (!window.cocoSsd) {
+        await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js");
+        await loadScript("https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js");
+      }
+      model = await window.cocoSsd.load({ base: "lite_mobilenet_v2" });
+      btn.textContent = "AI is on";
+      $("m-ai").textContent = "AI is on (COCO-SSD)";
+      log("AI model loaded (people and animals).");
+      if (stream && !aiTimer) aiTimer = setInterval(detectObjects, 700);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "Turn on AI (people and animals)";
+      $("m-ai").textContent = "AI could not load";
+      log("AI model could not load. Check your internet. Flame detection still works.", true);
+    }
+  }
+  // Follow each animal from one check to the next so we can count individuals and measure movement.
+  function updateTracks(dets, now) {
+    dets.forEach(function (d) {
+      var best = null, bd = 0.2;
+      tracks.forEach(function (t) {
+        if (t.cls !== d.cls || t.claimed === now) return;
+        var dist = Math.hypot(t.cx - d.cx, t.cy - d.cy);
+        if (dist < bd) { bd = dist; best = t; }
+      });
+      if (best) {
+        var dt = Math.max(0.1, (now - best.t) / 1000);
+        best.vx = 0.6 * best.vx + 0.4 * ((d.cx - best.cx) / dt);
+        best.vy = 0.6 * best.vy + 0.4 * ((d.cy - best.cy) / dt);
+        best.cx = d.cx; best.cy = d.cy; best.t = now; best.hits++; best.claimed = now;
+        if (!best.confirmed && best.hits >= 3) { best.confirmed = true; newInd[best.cls] = (newInd[best.cls] || 0) + 1; }
+      } else {
+        tracks.push({ cls: d.cls, cx: d.cx, cy: d.cy, vx: 0, vy: 0, t: now, hits: 1, confirmed: false, claimed: now });
+      }
+    });
+    tracks = tracks.filter(function (t) { return now - t.t < 3000; });
+  }
+
+  async function detectObjects() {
+    if (!model || !stream || aiBusy || video.readyState < 2) return;
+    aiBusy = true;
+    try {
+      var preds = await model.detect(video, 20, 0.45);
+      var cw = overlay.width, ch = overlay.height, now = Date.now();
+      var persons = preds.filter(function (p) { return p.class === "person" && p.score >= 0.55; });
+      var animals = preds.filter(function (p) { return ANIMALS[p.class] && p.score >= 0.5; });
+
+      // People: must be seen in 2 of the last 3 checks.
+      recentPeople.push(persons.length); if (recentPeople.length > 3) recentPeople.shift();
+      var seen = recentPeople.filter(function (c) { return c > 0; }).length;
+      people = seen >= 2 ? Math.max.apply(null, recentPeople) : 0;
+
+      // Possible injury: a person whose box is wider than tall (lying down) who does not move for 5 seconds.
+      personBoxes = persons.map(function (p) {
+        var lying = p.bbox[2] > 1.25 * p.bbox[3] && p.bbox[2] * p.bbox[3] > 0.03 * cw * ch;
+        return { x: p.bbox[0], y: p.bbox[1], w: p.bbox[2], h: p.bbox[3], s: p.score, lying: lying };
+      });
+      var lyingBox = personBoxes.filter(function (b) { return b.lying; })[0];
+      if (lyingBox) {
+        var c = { x: (lyingBox.x + lyingBox.w / 2) / cw, y: (lyingBox.y + lyingBox.h / 2) / ch };
+        if (!lyingSince || Math.hypot(c.x - lyingPos.x, c.y - lyingPos.y) > 0.05) { lyingSince = now; lyingPos = c; }
+        personDown = now - lyingSince >= 5000;
+      } else { lyingSince = null; lyingPos = null; personDown = false; }
+
+      // Animals: count per species, follow each one, measure speed and direction.
+      animalBoxes = animals.map(function (p) { return { x: p.bbox[0], y: p.bbox[1], w: p.bbox[2], h: p.bbox[3], s: p.score, cls: p.class }; });
+      updateTracks(animals.map(function (p) { return { cls: p.class, cx: (p.bbox[0] + p.bbox[2] / 2) / cw, cy: (p.bbox[1] + p.bbox[3] / 2) / ch }; }), now);
+      var species = {};
+      animals.forEach(function (p) { species[p.class] = (species[p.class] || 0) + 1; });
+      animalsNow = Object.keys(species).map(function (sp) {
+        var ts = tracks.filter(function (t) { return t.cls === sp && t.confirmed && now - t.t < 1500; });
+        var sx = 0, sv = 0;
+        ts.forEach(function (t) { sx += t.vx; sv += Math.hypot(t.vx, t.vy); });
+        var speed = ts.length ? sv / ts.length : 0, mx = ts.length ? sx / ts.length : 0;
+        return {
+          species: sp, count: species[sp], speed: Math.min(5, speed),
+          direction: speed < 0.02 ? "none" : (mx > 0.01 ? "right" : (mx < -0.01 ? "left" : "none")),
+          new_individuals: newInd[sp] || 0
+        };
+      });
+      render(); maybeSend(false);
+    } catch (e) { /* ignore a failed frame */ }
+    aiBusy = false;
+  }
+
+  /* ---------------------------------------------------------- drawing */
+  function render() {
+    var f = Math.round(smooth * 100);
+    $("m-fire").textContent = f + "%";
+    var bar = $("b-fire"); bar.style.width = f + "%";
+    bar.style.background = smooth >= 0.75 ? "var(--critical)" : smooth >= 0.5 ? "var(--warning)" : smooth >= 0.25 ? "var(--watch)" : "var(--safe)";
+    $("m-people").textContent = people;
+    $("m-motion").textContent = Math.round(motion * 100) + "%";
+    $("b-motion").style.width = Math.round(motion * 100) + "%";
+    $("m-down").textContent = personDown ? "Yes" : "No";
+    $("m-down").style.color = personDown ? "var(--critical)" : "";
+    $("m-animals").textContent = animalsNow.length
+      ? animalsNow.map(function (a) { return a.species + " x" + a.count + (a.direction !== "none" ? " (" + a.direction + ")" : ""); }).join(", ") : "None";
+    $("stage").classList.toggle("alarm", smooth >= 0.5 || personDown);
+
+    var cw = overlay.width, ch = overlay.height;
+    octx.clearRect(0, 0, cw, ch);
+    octx.lineWidth = Math.max(3, cw / 200);
+    octx.font = "600 " + Math.max(14, cw / 42) + "px sans-serif";
+    if (fireBox) {
+      octx.strokeStyle = "#E0691F"; octx.fillStyle = "#E0691F";
+      octx.strokeRect(fireBox.x * cw, fireBox.y * ch, fireBox.w * cw, fireBox.h * ch);
+      octx.fillText("Flame-like region " + f + "%", fireBox.x * cw, Math.max(16, fireBox.y * ch - 6));
+    }
+    personBoxes.forEach(function (b) {
+      var down = personDown && b.lying;
+      octx.strokeStyle = octx.fillStyle = down ? "#C62F35" : "#3BA0C8";
+      octx.strokeRect(b.x, b.y, b.w, b.h);
+      octx.fillText(down ? "Lying still: possible injury" : "Person " + Math.round(b.s * 100) + "%", b.x, Math.max(16, b.y - 6));
+    });
+    animalBoxes.forEach(function (b) {
+      octx.strokeStyle = octx.fillStyle = "#2F8F5B";
+      octx.strokeRect(b.x, b.y, b.w, b.h);
+      octx.fillText(b.cls + " " + Math.round(b.s * 100) + "%", b.x, Math.max(16, b.y - 6));
+    });
+  }
+
+  /* ---------------------------------------------------------- sending */
+  function snapshot() {
+    var c = document.createElement("canvas"); c.width = 320; c.height = 240;
+    c.getContext("2d").drawImage(video, 0, 0, 320, 240);
+    return c.toDataURL("image/jpeg", 0.6);
+  }
+
+  async function post(payload) {
+    if (!$("send").checked) return;
+    if (sending) return;
+    sending = true;
+    var headers = { "Content-Type": "application/json" };
+    if ($("apikey").value) headers["X-API-Key"] = $("apikey").value;
+    try {
+      var r = await fetch("/api/camera/event", { method: "POST", headers: headers, body: JSON.stringify(payload) });
+      if (!r.ok) throw new Error("Server said " + r.status);
+      setStatus("Connected. Last update sent at " + stamp() + ".", "ok");
+    } catch (e) {
+      setStatus("Cannot reach the server: " + e.message + ". Is MountainSentinel running?", "bad");
+    }
+    sending = false;
+  }
+
+  function payload(fire, persons, snap) {
+    var lat = parseFloat($("lat").value), lon = parseFloat($("lon").value);
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) { lat = 30.50; lon = 79.20; }
+    var p = {
+      camera_id: camId, name: $("cam-name").value.trim() || "Laptop camera", lat: lat, lon: lon,
+      fire_score: Math.min(1, Math.max(0, fire)), person_count: persons, motion: motion, ai_active: !!model,
+      person_down: personDown && persons > 0, roaming: $("roam").checked,
+      animals: animalsNow.map(function (a) {
+        return { species: a.species, count: a.count, speed: a.speed, direction: a.direction, new_individuals: a.new_individuals };
+      })
+    };
+    if (snap) p.snapshot = snap;
+    return p;
+  }
+
+  function maybeSend(force) {
+    if (!stream) return;
+    var fireActive = smooth >= 0.5, personActive = people > 0, downActive = personDown && personActive;
+    var speciesNow = animalsNow.map(function (a) { return a.species; }).sort();
+    var newSpecies = speciesNow.filter(function (sp) { return lastSpecies.indexOf(sp) < 0; });
+    var rising = (fireActive && !lastFireActive) || (personActive && !lastPersonActive) || (downActive && !lastDown) || newSpecies.length > 0;
+    var flipped = rising || fireActive !== lastFireActive || personActive !== lastPersonActive || downActive !== lastDown || speciesNow.join() !== lastSpecies.join();
+    var now = Date.now();
+    if (!force && !flipped && now - lastSent < 2000) return;
+    // Roaming: while a person is in view, send a fresh photo with the GPS position every 10 seconds.
+    var roamingPhoto = $("roam").checked && personActive && now - lastPersonSnap > 10000;
+    var snap = (rising || roamingPhoto) ? snapshot() : null;
+    if (snap && personActive) lastPersonSnap = now;
+    if (fireActive && !lastFireActive) log("Flames detected (" + Math.round(smooth * 100) + "%). Alert sent.", true);
+    if (!fireActive && lastFireActive) log("Flames gone.");
+    if (personActive && !lastPersonActive) log(people + (people === 1 ? " person" : " people") + " detected" + ($("roam").checked ? " (photo and GPS position sent)." : "."));
+    if (downActive && !lastDown) log("Person lying still: possible injury. Alert sent.", true);
+    newSpecies.forEach(function (sp) { log("New animal in view: " + sp + "."); });
+    lastFireActive = fireActive; lastPersonActive = personActive; lastDown = downActive; lastSpecies = speciesNow; lastSent = now;
+    post(payload(smooth, people, snap));
+    newInd = {};
+  }
+
+  /* ---------------------------------------------------------- test buttons + misc */
+  function testImage(label) {
+    var c = document.createElement("canvas"); c.width = 320; c.height = 240;
+    var g = c.getContext("2d");
+    var grad = g.createLinearGradient(0, 0, 0, 240); grad.addColorStop(0, "#9DBFA9"); grad.addColorStop(1, "#3B5B49");
+    g.fillStyle = grad; g.fillRect(0, 0, 320, 240);
+    g.fillStyle = "rgba(0,0,0,.6)"; g.fillRect(0, 206, 320, 34);
+    g.fillStyle = "#fff"; g.font = "600 14px sans-serif"; g.fillText("TEST IMAGE: " + label, 10, 228);
+    return c.toDataURL("image/jpeg", 0.6);
+  }
+
+  async function sendTest(kind) {
+    var snap = null;
+    if (stream) { try { snap = snapshot(); } catch (e) { /* ignore */ } }
+    if (!snap) snap = testImage(kind);
+    var body = payload(0, 0, snap);
+    body.animals = []; body.person_down = false; body.person_count = 0; body.fire_score = 0;
+    body.name = body.name + " (TEST)";
+    if (kind === "fire") body.fire_score = 0.92;
+    if (kind === "person") body.person_count = 2;
+    if (kind === "injured") { body.person_count = 1; body.person_down = true; }
+    if (kind === "animals") body.animals = [
+      { species: "elephant", count: 4, speed: 0.05, direction: "right", new_individuals: 4 },
+      { species: "bird", count: 6, speed: 0.2, direction: "left", new_individuals: 6 }];
+    var headers = { "Content-Type": "application/json" };
+    if ($("apikey").value) headers["X-API-Key"] = $("apikey").value;
+    try {
+      var r = await fetch("/api/camera/event", { method: "POST", headers: headers, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error("Server said " + r.status);
+      log("Sent a TEST " + kind + " detection.", kind === "fire" || kind === "injured");
+      setStatus("Test detection sent. Look at the dashboard.", "ok");
+      setTimeout(function () {
+        var clear = Object.assign({}, body, { fire_score: 0, person_count: 0, person_down: false, animals: [] });
+        delete clear.snapshot;
+        fetch("/api/camera/event", { method: "POST", headers: headers, body: JSON.stringify(clear) });
+      }, 12000);
+    } catch (e) {
+      setStatus("Cannot reach the server: " + e.message, "bad");
+    }
+  }
+
+  $("start").addEventListener("click", startCamera);
+  $("stop").addEventListener("click", stopCamera);
+  $("ai").addEventListener("click", enableAI);
+  $("t-fire").addEventListener("click", function () { sendTest("fire"); });
+  $("t-person").addEventListener("click", function () { sendTest("person"); });
+  $("t-injured").addEventListener("click", function () { sendTest("injured"); });
+  $("t-animals").addEventListener("click", function () { sendTest("animals"); });
+  $("roam").addEventListener("change", function () {
+    if ($("roam").checked) {
+      if (!navigator.geolocation) { $("gps").textContent = "This device cannot share GPS."; $("roam").checked = false; return; }
+      watchId = navigator.geolocation.watchPosition(function (pos) {
+        $("lat").value = pos.coords.latitude.toFixed(6); $("lon").value = pos.coords.longitude.toFixed(6);
+        $("gps").textContent = "GPS is live, accuracy about " + Math.round(pos.coords.accuracy) + " m.";
+      }, function () {
+        $("gps").textContent = "GPS was blocked. Allow location, or type the position."; $("roam").checked = false;
+      }, { enableHighAccuracy: true, maximumAge: 2000 });
+      log("Roaming mode on: the position follows GPS.");
+    } else {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      watchId = null; $("gps").textContent = "";
+    }
+  });
+  $("devices").addEventListener("change", function () { stopCamera(); startCamera(); });
+  $("geo").addEventListener("click", function () {
+    if (!navigator.geolocation) { setStatus("This browser cannot share its location.", "bad"); return; }
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      $("lat").value = pos.coords.latitude.toFixed(5); $("lon").value = pos.coords.longitude.toFixed(5);
+      localStorage.setItem("ms-lat", $("lat").value); localStorage.setItem("ms-lon", $("lon").value);
+      setStatus("Location set. Note: your real location may be far from the demo sensors, so scroll the map to find it.", "ok");
+    }, function () { setStatus("Location was blocked. Type the latitude and longitude instead.", "bad"); });
+  });
+  window.addEventListener("beforeunload", function () { if (stream) stream.getTracks().forEach(function (t) { t.stop(); }); });
+})();
+</script>
+</body>
+</html>
