@@ -1,4 +1,4 @@
-# MountainSentinel
+# Mountaintracker
 
 **An AI early-warning system for mountain disasters.**
 Low-cost sensor nodes, a hybrid physics + machine-learning risk engine, a laptop-camera node, and instant alerts to phones.
