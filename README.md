@@ -15,7 +15,7 @@ Built for HackDevengers 2.0 (Open Innovation, 24 hours).
 Mountain regions such as the Himalayas face landslides, flash floods, forest fires and earthquakes, often together and often in places with no mobile network and no monitoring. Warnings usually arrive too late, or not at all.
 Trekkers and hunters who get lost in forests are found too late because nobody knows they are missing.
 
-## What MountainSentinel does
+## What Mountaintracker does
 
 | Capability | How |
 |---|---|
